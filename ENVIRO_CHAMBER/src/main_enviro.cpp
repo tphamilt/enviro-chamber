@@ -20,22 +20,37 @@
 //#include "task_wifi.h"
 #include "taskshare.h"
 
+/// DRDY PIN FOR THERM
 #define DRDY_PIN 25
-#define CS1_PIN 4
-#define HEATER_PIN 27
-#define SCK 30
-#define SDO 31
-#define SDI 37
+/// CHIP SELECT 1 PIN
+#define CS1_PIN 4     
+/// CHIP SELECT 2 PIN
+#define CS2_PIN 5   
+/// CHIP SELECT 3 PIN
+#define CS3_PIN 6   
+/// HEATER CONTROL PIN
+#define HEATER_PIN 27 
+/// SCK PIN NUMBER
+#define SCK 30       
+/// SDO PIN NUMBER 
+#define SDO 31     
+/// SDI PIN NUMBER   
+#define SDI 37       
+/// THRESHOLD FOR HEATER ON/OFF
 #define THRESHOLD 10
 
+/// Share to communicate the desired temperature setpoint
 Share<int16_t> desired_temp ("Temperature");
+
+/// Share to communicate the current temperature reading
 Share<int16_t> temp_reading ("Curr Temp");
 
 /// A pointer to the web server object
 AsyncWebServer* p_server = NULL;
+
+/// String for the input parameter
 const char* PARAM_INT = "inputInt";
 
-// HTML web page to handle 3 input fields (input1, input2, input3)
 // HTML web page to handle input field (inputInt)
 const char index_html[] PROGMEM = R"rawliteral(
     <!DOCTYPE HTML><html><head>
@@ -115,7 +130,7 @@ void enterStringWithEcho (Stream& stream, char* buffer, uint8_t size)
 /** @brief   Handle not found error.
  *  @details This function handles a notfound error for the wifi server
  * 
- *           @b NOTE: This function is included from 
+ *           NOTE: This function is included from 
  *           https://randomnerdtutorials.com/esp32-esp8266-input-data-html-form/
  *  @param   size At most (this many - 1) characters will be read and stored 
  */
