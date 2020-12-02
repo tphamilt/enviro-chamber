@@ -21,6 +21,12 @@
 #include "taskshare.h"
 
 #define DRDY_PIN 25
+#define CS1_PIN 4
+#define HEATER_PIN 27
+#define SCK 30
+#define SDO 31
+#define SDI 37
+#define THRESHOLD 10
 
 Share<int16_t> desired_temp ("Temperature");
 Share<int16_t> temp_reading ("Curr Temp");
@@ -30,10 +36,11 @@ AsyncWebServer* p_server = NULL;
 const char* PARAM_INT = "inputInt";
 
 // HTML web page to handle 3 input fields (input1, input2, input3)
-// HTML web page to handle 3 input fields (inputString, inputInt, inputFloat)
+// HTML web page to handle input field (inputInt)
 const char index_html[] PROGMEM = R"rawliteral(
     <!DOCTYPE HTML><html><head>
     <title>ESP Input Form</title>
+    <h1>Enviro Chamber Test</h1>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <script>
         function submitMessage() {
@@ -42,7 +49,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         }
     </script></head><body>
     <form action="/get" target="hidden-form">
-        Setpoint Temperature (in &degC) (current value %inputInt%): 
+        Setpoint Temperature (in &degC): 
         <input type="number " name="inputInt">
         <input type="submit" value="Submit" onclick="submitMessage()">
     </form><br>
@@ -105,13 +112,33 @@ void enterStringWithEcho (Stream& stream, char* buffer, uint8_t size)
     }
 }
 
+/** @brief   Handle not found error.
+ *  @details This function handles a notfound error for the wifi server
+ * 
+ *           @b NOTE: This function is included from 
+ *           https://randomnerdtutorials.com/esp32-esp8266-input-data-html-form/
+ *  @param   size At most (this many - 1) characters will be read and stored 
+ */
 void notFound(AsyncWebServerRequest *request) {
   request->send(404, "text/plain", "Not found");
 }
 
+/** @brief   Read user input from file.
+ *  @details This function reads the user input from a file.
+ *           The file is opened and then checked for any errors before attempting
+ *           to read the user input.
+ * 
+ *           @b NOTE: This function is included from 
+ *           https://randomnerdtutorials.com/esp32-esp8266-input-data-html-form/
+ *  @param   fs SPIFFS adress file
+ *  @param   path the path to look for the file
+ * 
+ *  @return  returns the string read from the file
+ */
 String readFile(fs::FS &fs, const char * path){
   //Serial.printf("Reading file: %s\r\n", path);
   File file = fs.open(path, "r");
+  //do you have to close files in c++? - Trent
   if(!file || file.isDirectory()){
     Serial.println("- empty file or failed to open file");
     return String();
@@ -125,6 +152,17 @@ String readFile(fs::FS &fs, const char * path){
   return fileContent;
 }
 
+/** @brief   Write user input to file.
+ *  @details This function writes the user input to a file.
+ *           The file is opened and then checked for any errors before attempting
+ *           to write the user input.
+ * 
+ *           @b NOTE: This function is included from 
+ *           https://randomnerdtutorials.com/esp32-esp8266-input-data-html-form/
+ *  @param   fs SPIFFS adress file
+ *  @param   path the path to look for the file
+ *  @param   message what to write to the file
+ */
 void writeFile(fs::FS &fs, const char * path, const char * message){
   //Serial.printf("Writing file: %s\r\n", path);
   File file = fs.open(path, "w");
@@ -221,11 +259,11 @@ void task_WiFi (void* p_params)
     for (;;)
     {
         //server.handleClient ();
-          // To access your stored values on inputString, inputInt, inputFloat
+        // To access your stored values on inputInt
         int yourInputInt = readFile(SPIFFS, "/inputInt.txt").toInt();
         Serial.print("*** Your inputInt: ");
         Serial.println(yourInputInt);
-        //desired_temp.put(yourInputInt);
+        //desired_temp.put(yourInputInt); --> uses too much stack space?
         vTaskDelay (5000);
     }
 }
@@ -237,8 +275,22 @@ void task_WiFi (void* p_params)
 void task_heater(void* p_params){
     (void)p_params;
 
-    for(;;){
+    int16_t setpoint = 20;
+    int16_t current = 0;
 
+    //set pin mode to output for heater control
+    pinMode(HEATER_PIN, OUTPUT);
+
+    for(;;){
+        desired_temp.get(setpoint);
+        temp_reading.get(current);
+        if(current < (setpoint - THRESHOLD)){
+            digitalWrite(HEATER_PIN, 1);
+        }
+        else{
+            digitalWrite(HEATER_PIN, 0);
+        }
+        vTaskDelay(100);
     }
 }
 
@@ -249,10 +301,15 @@ void task_heater(void* p_params){
 void task_sensor(void* p_params){
     (void)p_params;
 
-    Adafruit_MAX31856 therm1 = Adafruit_MAX31856(10);
+    Adafruit_MAX31856 therm1 = Adafruit_MAX31856(CS1_PIN, SDI, SDO, SCK);
     pinMode(DRDY_PIN, INPUT);
 
-    therm1.setThermocoupleType(MAX31856_TCTYPE_K);
+    if (!therm1.begin()) {
+        Serial.println("Could not initialize thermocouple.");
+        while (1) delay(10);
+    }
+
+    therm1.setThermocoupleType(MAX31856_TCTYPE_T);
     therm1.setConversionMode(MAX31856_CONTINUOUS);
 
     for(;;){
@@ -268,9 +325,9 @@ void task_sensor(void* p_params){
     }
 }
 
-/** @brief   Set up the ESP32 to do a simple web demonstration.
- *  @details This program runs only one task. The task runs a web server using
- *           the ESP32's WiFi interface. 
+/** @brief   Set up the ESP32
+ *  @details This program runs the tasks to control the heater
+ *           and run the web server.
  */
 void setup (void) 
 {
@@ -284,20 +341,26 @@ void setup (void)
 
     // Create a task to run the WiFi connection. This task needs a lot of stack
     // space to prevent it crashing
-    /*
+    
     xTaskCreate (task_WiFi,
                  "WiFi",
                  4500,
                  NULL,
                  1,
                  NULL);
-                 */
-
+                 
     xTaskCreate (task_sensor,
                 "sensor",
-                4500,
+                1000,
                 NULL,
                 1,
+                NULL);
+
+    xTaskCreate (task_heater,
+                "heater",
+                1000,
+                NULL,
+                3,
                 NULL);
 }
 
